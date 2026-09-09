@@ -1,0 +1,13 @@
+#Blue, Yellow, Green
+const SPIN_COLORS = {
+  up:   '#0095b3',   // S = +1
+  zero: '#756f3a',   // S = 0
+  down: '#316930',   // S = -1
+};
+
+#Blue, Grey, Yellow
+const SPIN_COLORS = {
+  up:   '#0095b3',   // S = +1
+  zero: '#454545',   // S = 0
+  down: '#756f3a',   // S = -1
+};

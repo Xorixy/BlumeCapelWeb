@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Blume–Capel Model — Live Monte Carlo</title>
+<style>
+  :root{
+    --bg: #0f141c;
+    --panel: #1a2230;
+    --panel-2: #212c3d;
+    --border: #2d3a4f;
+    --text: #e6edf5;
+    --muted: #8b98a9;
+    --accent: #35c2ff;
+    --accent-dark: #1f9ed6;
+    --radius: 10px;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+  header{
+    padding: 18px 20px 6px;
+  }
+  header h1{
+    margin:0; font-size: 1.4rem; letter-spacing:.2px;
+  }
+  header p{
+    margin:4px 0 0; color:var(--muted); font-size:.86rem;
+  }
+  main{
+    display:grid;
+    grid-template-columns: 1fr 360px;
+    gap:16px;
+    padding:14px 20px 28px;
+    max-width: 1400px;
+    margin:0 auto;
+  }
+  .card{
+    background: var(--panel);
+    border:1px solid var(--border);
+    border-radius: var(--radius);
+    padding:14px;
+  }
+  .card + .card{ margin-top:16px; }
+  .card h2{
+    margin:0 0 10px; font-size:.92rem; font-weight:600; color:var(--accent);
+    text-transform: uppercase; letter-spacing:.6px;
+  }
+  .lattice-panel{ position:relative; }
+  .lattice-wrap{
+    position:relative; width:100%; aspect-ratio:1/1; overflow:hidden;
+    border-radius: var(--radius); background:#05080d;
+  }
+  canvas#lattice{ position:absolute; inset:0; width:100%; height:100%; display:block; }
+  .legend{
+    display:flex; gap:14px; margin-top:10px; font-size:.8rem; color:var(--muted);
+    flex-wrap:wrap;
+  }
+  .legend span{ display:inline-flex; align-items:center; gap:6px; }
+  .swatch{ width:12px; height:12px; border-radius:3px; display:inline-block; }
+  .sw-up{ background:var(--up); }
+  .sw-zero{ background:var(--zero); }
+  .sw-down{ background:var(--down); }
+  .lattice-hint{ margin-top:10px; color:var(--muted); font-size:.78rem; }
+
+  /* phase diagram */
+  .phase-card{ position:relative; }
+  #phase{ display:block; width:100%; height:300px; cursor:crosshair; touch-action:none; }
+  .readout{
+    display:flex; justify-content:space-between; gap:10px; margin-top:10px;
+    font-size:.9rem; flex-wrap:wrap;
+  }
+  .readout .val{ color:var(--accent); font-variant-numeric: tabular-nums; font-weight:600; }
+  .hint{ color:var(--muted); font-size:.78rem; margin-top:8px; }
+
+  /* controls */
+  .row{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
+  .row label{ color:var(--muted); font-size:.82rem; }
+  select, input[type=number]{
+    background:var(--panel-2); color:var(--text); border:1px solid var(--border);
+    border-radius:6px; padding:6px 8px; font-size:.85rem;
+  }
+  select:focus, input:focus{ outline:none; border-color:var(--accent); }
+  .btns{ display:flex; flex-wrap:wrap; gap:8px; }
+  button{
+    background:var(--panel-2); color:var(--text); border:1px solid var(--border);
+    border-radius:6px; padding:8px 12px; font-size:.84rem; cursor:pointer;
+    transition: background .12s, border-color .12s;
+  }
+  button:hover{ background:#2c3a50; }
+  button.primary{ background:var(--accent); color:#06222f; border-color:var(--accent); font-weight:600; }
+  button.primary:hover{ background:var(--accent-dark); }
+  button.active{ border-color:var(--accent); color:var(--accent); }
+  details{ margin-top:4px; border-top:1px solid var(--border); padding-top:10px; }
+  summary{ cursor:pointer; color:var(--muted); font-size:.82rem; }
+  .obs-grid{
+    display:grid; grid-template-columns:1fr 1fr; gap:8px 16px; font-size:.85rem;
+  }
+  .obs{ display:flex; justify-content:space-between; }
+  .obs .k{ color:var(--muted); }
+  .obs .v{ font-variant-numeric:tabular-nums; color:var(--accent); font-weight:600; }
+  .status{ margin-top:10px; font-size:.8rem; color:var(--muted); }
+
+  @media (max-width: 820px){
+    main{ grid-template-columns:1fr; padding:12px 14px 24px; }
+    header{ padding:14px 14px 4px; }
+    #phase{ height:240px; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Blume–Capel Model</h1>
+    <p>Spin-1 ferromagnet · <span style="color:var(--muted)">J = 1</span> · 2D square lattice · Metropolis Monte Carlo</p>
+  </header>
+
+  <main>
+    <!-- lattice -->
+    <section class="card lattice-panel">
+      <div class="lattice-wrap">
+        <canvas id="lattice"></canvas>
+      </div>
+      <div class="legend">
+        <span><span class="swatch sw-up"></span>S = +1</span>
+        <span><span class="swatch sw-zero"></span>S = 0</span>
+        <span><span class="swatch sw-down"></span>S = −1</span>
+      </div>
+      <div class="lattice-hint">Tap the grid to pause / resume</div>
+    </section>
+
+    <aside>
+      <!-- phase diagram -->
+      <div class="card phase-card">
+        <h2>Parameter space</h2>
+        <canvas id="phase"></canvas>
+        <div class="readout">
+          <div>T = <span class="val" id="readT">–</span></div>
+          <div>D = <span class="val" id="readD">–</span></div>
+        </div>
+        <div class="hint">Drag the dot to change (T, D). The simulation follows live.</div>
+      </div>
+
+      <!-- controls -->
+      <div class="card">
+        <h2>Controls</h2>
+        <div class="row">
+          <label for="speed">Speed</label>
+          <select id="speed">
+            <option value="0.25">Chill</option>
+            <option value="0.5" selected>Slow</option>
+            <option value="1">Normal</option>
+            <option value="2">Fast</option>
+            <option value="4">Turbo</option>
+          </select>
+        </div>
+        <div class="btns">
+          <button id="playPause" class="primary">Pause</button>
+        </div>
+
+        <div style="margin-top:12px;">
+          <div style="font-size:.82rem;color:var(--muted);margin-bottom:8px;">Initialise spins</div>
+          <div class="btns">
+            <button data-init="random" class="active">Random</button>
+          </div>
+        </div>
+
+        <h2 style="margin-top:16px;">Observables</h2>
+        <div class="obs-grid">
+          <div class="obs"><span class="k">⟨m⟩</span><span class="v" id="obsM">–</span></div>
+          <div class="obs"><span class="k">e / site</span><span class="v" id="obsE">–</span></div>
+        </div>
+        <div class="status" id="status">—</div>
+      </div>
+    </aside>
+  </main>
+
+<script>
+"use strict";
+
+/* ============================================================
+   Blume–Capel model
+   H = -J Σ_{<ij>} S_i S_j + D Σ_i S_i² - h Σ_i S_i
+   J = 1, spins S ∈ {-1, 0, +1}, k_B = 1, 2D square lattice (PBC)
+   ============================================================ */
+
+// ---- simulation state -------------------------------------------------
+const sim = {
+  L: 512,           // fixed lattice linear size
+  N: 512*512,
+  spins: null,      // Int8Array of spins
+  nb: null,         // Int32Array, 4 neighbors per site (periodic)
+  order: null,      // Uint32Array, shuffled site-visit order
+  J: 1,
+  D: 0.5,
+  T: 1.2,
+  h: 0,
+  bondE: 0,         // Σ_bonds -J S_i S_j
+  sumS: 0,          // Σ S_i
+  sumS2: 0,         // Σ S_i²
+  running: true,
+  sweepsPerFrame: 0.5,
+  samples: 0,
+  avgM: 0, avgE: 0,
+};
+
+// ---- canonical axis ranges (J = 1) ------------------------------------
+const TMIN = 0, TMAX = 3;
+const DMIN = -2, DMAX = 3;
+
+// ---- canvas helpers ----------------------------------------------------
+function fitCanvas(canvas){
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth || 300;
+  const h = canvas.clientHeight || 300;
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w, h, dpr };
+}
+
+// ---- lattice / neighbor setup ------------------------------------------
+function buildNeighbors(L){
+  const N = L*L;
+  const nb = new Int32Array(N*4);
+  for (let y=0; y<L; y++){
+    for (let x=0; x<L; x++){
+      const i = y*L + x;
+      nb[i*4+0] = ((y-1+L)%L)*L + x;      // up
+      nb[i*4+1] = ((y+1)%L)*L + x;        // down
+      nb[i*4+2] = y*L + ((x-1+L)%L);      // left
+      nb[i*4+3] = y*L + ((x+1)%L);        // right
+    }
+  }
+  return nb;
+}
+
+function allocLattice(){
+  sim.N = sim.L * sim.L;
+  sim.spins = new Int8Array(sim.N);
+  sim.nb = buildNeighbors(sim.L);
+  sim.order = new Uint32Array(sim.N);
+  for (let i=0; i<sim.N; i++) sim.order[i] = i;
+}
+
+function initSpins(mode){
+  const { spins, N } = sim;
+  for (let i=0; i<N; i++){
+    if (mode === 'random') spins[i] = Math.floor(Math.random()*3) - 1; // -1,0,1
+    else if (mode === '+1') spins[i] = 1;
+    else if (mode === '0')  spins[i] = 0;
+    else if (mode === '-1') spins[i] = -1;
+  }
+  recomputeEnergy();
+  resetAverages();
+}
+
+function recomputeEnergy(){
+  const { L, spins, nb, J } = sim;
+  const N = sim.N;
+  let bond = 0, sS = 0, sS2 = 0;
+  for (let i=0; i<N; i++){
+    const s = spins[i];
+    sS += s;
+    sS2 += s*s;
+  }
+  // count each bond once: right neighbor and down neighbor
+  for (let y=0; y<L; y++){
+    for (let x=0; x<L; x++){
+      const i = y*L + x;
+      const right = y*L + ((x+1)%L);
+      const down  = ((y+1)%L)*L + x;
+      bond += -J * spins[i] * spins[right];
+      bond += -J * spins[i] * spins[down];
+    }
+  }
+  sim.bondE = bond; sim.sumS = sS; sim.sumS2 = sS2;
+}
+
+function currentEnergy(){
+  return sim.bondE + sim.D * sim.sumS2 - sim.h * sim.sumS;
+}
+
+// ---- Metropolis sweep ---------------------------------------------------
+function mcSweep(){
+  const { N, spins, nb, order, J, D, T, h } = sim;
+  const invT = 1 / T;
+  // Fisher–Yates shuffle of the visit order, once per sweep
+  for (let i = N-1; i > 0; i--){
+    const j = (Math.random() * (i+1)) | 0;
+    const t = order[i]; order[i] = order[j]; order[j] = t;
+  }
+  for (let k=0; k<N; k++){
+    const i = order[k];
+    const base = i*4;
+    const s = spins[i];
+    const nnSum = spins[nb[base]] + spins[nb[base+1]] + spins[nb[base+2]] + spins[nb[base+3]];
+    let newS;
+    if (s === 0)      newS = Math.random() < 0.5 ? -1 : 1;
+    else if (s === 1) newS = Math.random() < 0.5 ? -1 : 0;
+    else              newS = Math.random() < 0.5 ? 0  : 1;
+    if (newS === s) continue;
+    const ds = newS - s;
+    const dE = -J * ds * nnSum + D * (newS*newS - s*s) - h * ds;
+    if (dE <= 0 || Math.random() < Math.exp(-invT * dE)){
+      spins[i] = newS;
+      sim.bondE += -J * ds * nnSum;
+      sim.sumS  += ds;
+      sim.sumS2 += (newS*newS - s*s);
+    }
+  }
+}
+
+function runSweeps(k){
+  for (let n=0; n<k; n++) mcSweep();
+}
+// run MC for ~ms of wall-clock time (adaptive: avoids long freezes on the big lattice)
+function runSweepsForTime(ms){
+  const end = performance.now() + ms;
+  while (performance.now() < end) mcSweep();
+}
+// fractional sweep accumulation (allows sub-sweep speeds, e.g. 0.5 sweeps/frame)
+let sweepAccum = 0;
+function runSweepsForFrame(rate){
+  sweepAccum += rate;
+  const n = Math.floor(sweepAccum);
+  sweepAccum -= n;
+  if (n > 0) runSweeps(n);
+}
+
+function resetAverages(){
+  sim.samples = 0; sim.avgM = 0; sim.avgE = 0;
+}
+
+// ---- lattice rendering --------------------------------------------------
+// Spin colors: single source of truth. Edit these three hex values to restyle
+// both the lattice (via colorBySpin/spinRGB) and the legend swatches (via --up/--zero/--down).
+const SPIN_COLORS = {
+  up:   '#0095b3',   // S = +1
+  zero: '#756f3a',   // S = 0
+  down: '#316930',   // S = -1
+};
+const colorBySpin = [SPIN_COLORS.down, SPIN_COLORS.zero, SPIN_COLORS.up]; // index = s + 1  (-1, 0, +1)
+// parse hex colors once into [r,g,b] for the fast pixel buffer
+const spinRGB = colorBySpin.map(c => [parseInt(c.slice(1,3),16),
+                                      parseInt(c.slice(3,5),16),
+                                      parseInt(c.slice(5,7),16)]);
+// push the palette to the CSS custom properties used by the legend swatches
+function applySpinColors(){
+  const root = document.documentElement;
+  root.style.setProperty('--up', SPIN_COLORS.up);
+  root.style.setProperty('--zero', SPIN_COLORS.zero);
+  root.style.setProperty('--down', SPIN_COLORS.down);
+}
+
+// offscreen L×L buffer rendered via ImageData (fast for 512×512), then scaled to fit
+let offCanvas = null, offCtx = null, offImg = null;
+function ensureRenderBuffer(){
+  if (offCanvas && offCanvas.width === sim.L) return;
+  offCanvas = document.createElement('canvas');
+  offCanvas.width = sim.L; offCanvas.height = sim.L;
+  offCtx = offCanvas.getContext('2d');
+  offImg = offCtx.createImageData(sim.L, sim.L);
+}
+
+function drawLattice(){
+  ensureRenderBuffer();
+  const { L, spins } = sim;
+  const data = offImg.data;
+  for (let i=0; i<L*L; i++){
+    const c = spinRGB[spins[i] + 1];
+    const o = i*4;
+    data[o]   = c[0];
+    data[o+1] = c[1];
+    data[o+2] = c[2];
+    data[o+3] = 255;
+  }
+  offCtx.putImageData(offImg, 0, 0);
+
+  // scale the pixel buffer onto the visible (container-sized) canvas
+  const canvas = document.getElementById('lattice');
+  const { ctx, w, h } = fitCanvas(canvas);
+  ctx.clearRect(0, 0, w, h);
+  ctx.imageSmoothingEnabled = false;   // crisp lattice cells
+  ctx.drawImage(offCanvas, 0, 0, w, h);
+}
+
+// ---- phase diagram ------------------------------------------------------
+const phaseMargins = { left: 42, right: 14, top: 22, bottom: 32 };
+let phaseDirty = true;
+const TRACE_DECAY = 1000;   // the path trace fades over ~1 s
+const trace = [];           // recent dot positions {t, d, at}
+let lastTraceAt = 0;
+
+function tToPx(t, pw){ return phaseMargins.left + (t - TMIN)/(TMAX-TMIN)*pw; }
+function dToPy(d, ph){ return phaseMargins.top + (DMAX - d)/(DMAX-DMIN)*ph; }
+function pxToT(x, pw){ return TMIN + (x - phaseMargins.left)/pw*(TMAX-TMIN); }
+function pyToD(y, ph){ return DMAX - (y - phaseMargins.top)/ph*(DMAX-DMIN); }
+
+function drawPhase(){
+  const canvas = document.getElementById('phase');
+  const { ctx, w, h } = fitCanvas(canvas);
+  const pw = w - phaseMargins.left - phaseMargins.right;
+  const ph = h - phaseMargins.top - phaseMargins.bottom;
+  const now = performance.now();
+
+  ctx.clearRect(0, 0, w, h);
+  // drop expired trace points
+  while (trace.length && now - trace[0].at > TRACE_DECAY) trace.shift();
+
+  // plot area background
+  ctx.fillStyle = '#141b26';
+  ctx.fillRect(phaseMargins.left, phaseMargins.top, pw, ph);
+
+  // grid + tick labels (T on x, D on y)
+  ctx.font = '11px system-ui, sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+
+  ctx.strokeStyle = '#273344';
+  ctx.lineWidth = 1;
+  ctx.fillStyle = '#8b98a9';
+
+  // x ticks (T)
+  const tTicks = 7; // 0..3 step .5
+  for (let k=0; k<=tTicks; k++){
+    const t = TMIN + k/(tTicks)*(TMAX-TMIN);
+    const px = tToPx(t, pw);
+    ctx.beginPath(); ctx.moveTo(px, phaseMargins.top); ctx.lineTo(px, phaseMargins.top+ph); ctx.stroke();
+    ctx.fillText(t.toFixed(1).replace('.0',''), px, phaseMargins.top+ph+5);
+  }
+  // y ticks (D)
+  const dMinT = Math.ceil(DMIN), dMaxT = Math.floor(DMAX);
+  for (let d=dMinT; d<=dMaxT; d++){
+    const py = dToPy(d, ph);
+    ctx.beginPath(); ctx.moveTo(phaseMargins.left, py); ctx.lineTo(phaseMargins.left+pw, py); ctx.stroke();
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.fillText(String(d), phaseMargins.left-7, py);
+  }
+
+  // axes lines at D=0 (horizontal, the T axis) and T=0 (vertical, the D axis)
+  ctx.strokeStyle = '#3d4d66';
+  ctx.lineWidth = 1.5;
+  const xT0 = tToPx(0, pw), yD0 = dToPy(0, ph);
+  ctx.beginPath(); ctx.moveTo(xT0, phaseMargins.top); ctx.lineTo(xT0, phaseMargins.top+ph); ctx.stroke(); // T=0
+  ctx.beginPath(); ctx.moveTo(phaseMargins.left, yD0); ctx.lineTo(phaseMargins.left+pw, yD0); ctx.stroke(); // D=0
+
+  // axis labels (D upper-left, T lower-right)
+  ctx.fillStyle = '#e6edf5'; ctx.font = 'bold 13px system-ui, sans-serif';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+  ctx.fillText('D', phaseMargins.left + 2, phaseMargins.top - 3);
+  ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic';
+  ctx.fillText('T', phaseMargins.left + pw, phaseMargins.top + ph + 16);
+  ctx.textBaseline = 'top';
+
+  // border
+  ctx.strokeStyle = '#2d3a4f';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(phaseMargins.left, phaseMargins.top, pw, ph);
+
+  // ---- path trace (fades over ~1 s) ----
+  if (trace.length > 1){
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (let i=1; i<trace.length; i++){
+      const a = trace[i-1], b = trace[i];
+      const age = now - b.at;
+      if (age >= TRACE_DECAY) continue;
+      const alpha = 1 - age / TRACE_DECAY;
+      ctx.strokeStyle = `rgba(53,194,255,${(alpha*0.85).toFixed(3)})`;
+      ctx.lineWidth = 1 + 2.5*alpha;
+      ctx.beginPath();
+      ctx.moveTo(tToPx(a.t, pw), dToPy(a.d, ph));
+      ctx.lineTo(tToPx(b.t, pw), dToPy(b.d, ph));
+      ctx.stroke();
+    }
+  }
+
+  // ---- draggable dot ----
+  const dotX = tToPx(sim.T, pw), dotY = dToPy(sim.D, ph);
+  const r = 9;
+  ctx.beginPath(); ctx.arc(dotX, dotY, r + 3, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(53,194,255,0.25)'; ctx.fill();
+  ctx.beginPath(); ctx.arc(dotX, dotY, r, 0, Math.PI*2);
+  ctx.fillStyle = '#35c2ff'; ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = '#e9f7ff'; ctx.stroke();
+
+  // value label near the dot
+  ctx.font = 'bold 12px system-ui, sans-serif';
+  ctx.fillStyle = '#e6edf5'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+  const lx = Math.min(dotX + r + 6, phaseMargins.left + pw - 96);
+  const ly = Math.max(dotY - r - 4, phaseMargins.top + 10);
+  ctx.fillText(`T=${sim.T.toFixed(2)}, D=${sim.D.toFixed(2)}`, lx, ly);
+}
+
+function setParams(t, d){
+  sim.T = Math.min(TMAX, Math.max(TMIN, t));
+  sim.D = Math.min(DMAX, Math.max(DMIN, d));
+  addTracePoint(sim.T, sim.D);
+  phaseDirty = true;
+}
+// record a point on the dot's path (throttled to ~60 points/s)
+function addTracePoint(t, d){
+  const now = performance.now();
+  if (now - lastTraceAt < 16) return;
+  lastTraceAt = now;
+  trace.push({ t, d, at: now });
+}
+// true while any trace point is still within the decay window
+function hasLiveTrace(){
+  const now = performance.now();
+  for (let i=0; i<trace.length; i++){
+    if (now - trace[i].at < TRACE_DECAY) return true;
+  }
+  return false;
+}
+
+// phase diagram drag/tap interaction
+function attachPhasePointer(){
+  const canvas = document.getElementById('phase');
+  let dragging = false, active = false;
+
+  function updateFromEvent(e){
+    const { ctx, w, h } = fitCanvas(canvas);
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const pw = w - phaseMargins.left - phaseMargins.right;
+    const ph = h - phaseMargins.top - phaseMargins.bottom;
+    const t = pxToT(x, pw), d = pyToD(y, ph);
+    setParams(t, d);
+  }
+
+  // Pressing anywhere on the diagram grabs the dot: tap-to-jump or drag-to-follow.
+  canvas.addEventListener('pointerdown', (e)=>{
+    active = true; dragging = true;
+    canvas.setPointerCapture(e.pointerId);
+    updateFromEvent(e);
+    e.preventDefault();
+  });
+  canvas.addEventListener('pointermove', (e)=>{
+    if (active && dragging){ updateFromEvent(e); e.preventDefault(); }
+  });
+  canvas.addEventListener('pointerup', (e)=>{
+    active = false; dragging = false;
+    try { canvas.releasePointerCapture(e.pointerId); } catch(_){}
+  });
+  canvas.addEventListener('pointercancel', ()=>{ active=false; dragging=false; });
+}
+
+// ---- UI wiring -----------------------------------------------------------
+function fmt(x, n=3){ return x.toFixed(n); }
+
+function updateReadout(){
+  document.getElementById('readT').textContent = sim.T.toFixed(2);
+  document.getElementById('readD').textContent = sim.D.toFixed(2);
+  document.getElementById('obsM').textContent    = fmt(sim.avgM);
+  document.getElementById('obsE').textContent    = fmt(currentEnergy() / sim.N);
+  document.getElementById('status').textContent =
+    `${sim.L}×${sim.L} · J=${sim.J.toFixed(1)} · ${sim.running ? 'running' : 'paused'}`;
+}
+
+function wireControls(){
+  const playPause = document.getElementById('playPause');
+  function setRunUILabel(){
+    playPause.textContent = sim.running ? 'Pause' : 'Play';
+    playPause.classList.toggle('primary', sim.running);
+  }
+  function toggleRunning(){
+    sim.running = !sim.running;
+    setRunUILabel();
+  }
+  playPause.addEventListener('click', toggleRunning);
+
+  // tapping the lattice grid also toggles pause/resume
+  document.getElementById('lattice').addEventListener('click', toggleRunning);
+
+  document.getElementById('speed').addEventListener('change', (e)=>{
+    sim.sweepsPerFrame = parseFloat(e.target.value);
+  });
+
+  document.querySelectorAll('[data-init]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      initSpins(btn.dataset.init);
+      document.querySelectorAll('[data-init]').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+}
+
+// run a quick equilibration after big parameter jumps (dot dragging) while keeping UI responsive
+let dragTimer = null;
+function dragEquilibrate(){
+  clearTimeout(dragTimer);
+  dragTimer = setTimeout(()=>{
+    const wasRunning = sim.running;
+    sim.running = false;
+    runSweepsForTime(50);
+    resetAverages();
+    if (wasRunning) sim.running = true;
+    phaseDirty = true;
+  }, 60);
+}
+
+// ---- main loop ------------------------------------------------------------
+function frame(){
+  if (sim.running){
+    runSweepsForFrame(sim.sweepsPerFrame);
+  }
+  // rolling averages of observables
+  const m = sim.sumS / sim.N;
+  const e = currentEnergy() / sim.N;
+  const a = 0.04;
+  sim.avgM    = sim.avgM    + a*(m - sim.avgM);
+  sim.avgE    = sim.avgE    + a*(e - sim.avgE);
+  sim.samples++;
+
+  drawLattice();
+  if (phaseDirty || hasLiveTrace()){ drawPhase(); phaseDirty = false; }
+  updateReadout();
+
+  requestAnimationFrame(frame);
+}
+
+// ---- boot -----------------------------------------------------------------
+function boot(){
+  applySpinColors();
+  allocLattice();
+  initSpins('random');
+  setParams(1.2, 0.5);
+
+  wireControls();
+  attachPhasePointer();
+
+  // resize handling
+  window.addEventListener('resize', ()=>{ phaseDirty = true; });
+
+  drawPhase();
+  phaseDirty = false;
+  requestAnimationFrame(frame);
+}
+
+boot();
+</script>
+</body>
+</html>
