@@ -371,10 +371,15 @@ function mcSweep(){
     let newK = (Math.random()*n) | 0;   // 0..n-1
     if (newK >= s) newK++;              // 0..n, never equal to s
     const rowOld = COST[s], rowNew = COST[newK];
-    const dEbond = -( (rowNew[s0]+rowNew[s1]+rowNew[s2]+rowNew[s3])
-                    - (rowOld[s0]+rowOld[s1]+rowOld[s2]+rowOld[s3]) );
+    // Sum the per-neighbour differences. This cancels exactly for zero-energy wall
+    // moves, whereas a difference of two sums can leave ~1e-16 of round-off whose
+    // sign depends on the wall orientation. At T = 0 that sign *is* the accept/reject
+    // decision, producing a spurious chiral drift; the tolerance guards against any
+    // residual round-off in the tie cases.
+    const dEbond = (rowOld[s0] - rowNew[s0]) + (rowOld[s1] - rowNew[s1])
+                 + (rowOld[s2] - rowNew[s2]) + (rowOld[s3] - rowNew[s3]);
     const dE = dEbond + D*((newK === 0 ? 0 : 1) - (s === 0 ? 0 : 1));
-    if (dE <= 0 || Math.random() < Math.exp(-invT*dE)){
+    if (dE <= 1e-9 || Math.random() < Math.exp(-invT*dE)){
       spins[i] = newK;
       sim.bondE += dEbond;
       if (newK !== 0){ sim.reSum += ZRE[newK]; sim.imSum += ZIM[newK]; sim.nNonzero++; }
