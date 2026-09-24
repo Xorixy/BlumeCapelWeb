@@ -366,7 +366,8 @@ function mcSweep(){
     const base = i*4;
     const s = spins[i];
     const s0 = spins[nb[base]], s1 = spins[nb[base+1]], s2 = spins[nb[base+2]], s3 = spins[nb[base+3]];
-    // propose uniformly among the N states other than s (symmetric proposal)
+    // propose uniformly among the N states other than the current one (symmetric
+    // proposal q(s->s')=q(s'->s)=1/N); if the move is rejected we simply stay.
     let newK = (Math.random()*n) | 0;   // 0..n-1
     if (newK >= s) newK++;              // 0..n, never equal to s
     const rowOld = COST[s], rowNew = COST[newK];
