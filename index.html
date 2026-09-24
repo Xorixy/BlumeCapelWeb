@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Blume–Capel Model — Live Monte Carlo</title>
+<title>Blume–Capel × Clock Model — Live Monte Carlo</title>
 <style>
   :root{
     --bg: #0f141c;
@@ -60,14 +60,14 @@
   }
   canvas#lattice{ position:absolute; inset:0; width:100%; height:100%; display:block; }
   .legend{
-    display:flex; gap:14px; margin-top:10px; font-size:.8rem; color:var(--muted);
-    flex-wrap:wrap;
+    display:flex; gap:10px 12px; margin-top:10px; font-size:.8rem; color:var(--muted);
+    flex-wrap:wrap; align-items:center;
   }
   .legend span{ display:inline-flex; align-items:center; gap:6px; }
-  .swatch{ width:12px; height:12px; border-radius:3px; display:inline-block; }
-  .sw-up{ background:var(--up); }
-  .sw-zero{ background:var(--zero); }
-  .sw-down{ background:var(--down); }
+  .swatch{
+    width:12px; height:12px; border-radius:3px; display:inline-block;
+    border:1px solid rgba(255,255,255,0.22);
+  }
   .lattice-hint{ margin-top:10px; color:var(--muted); font-size:.78rem; }
 
   /* phase diagram */
@@ -98,8 +98,6 @@
   button.primary{ background:var(--accent); color:#06222f; border-color:var(--accent); font-weight:600; }
   button.primary:hover{ background:var(--accent-dark); }
   button.active{ border-color:var(--accent); color:var(--accent); }
-  details{ margin-top:4px; border-top:1px solid var(--border); padding-top:10px; }
-  summary{ cursor:pointer; color:var(--muted); font-size:.82rem; }
   .obs-grid{
     display:grid; grid-template-columns:1fr 1fr; gap:8px 16px; font-size:.85rem;
   }
@@ -117,8 +115,8 @@
 </head>
 <body>
   <header>
-    <h1>Blume–Capel Model</h1>
-    <p>Spin-1 ferromagnet · <span style="color:var(--muted)">J = 1</span> · 2D square lattice · Metropolis Monte Carlo</p>
+    <h1>Blume–Capel × Clock Model</h1>
+    <p><span style="color:var(--muted)">N</span> clock states + vacancy (state 0) · 2D square lattice · Metropolis Monte Carlo</p>
   </header>
 
   <main>
@@ -127,11 +125,7 @@
       <div class="lattice-wrap">
         <canvas id="lattice"></canvas>
       </div>
-      <div class="legend">
-        <span><span class="swatch sw-up"></span>S = +1</span>
-        <span><span class="swatch sw-zero"></span>S = 0</span>
-        <span><span class="swatch sw-down"></span>S = −1</span>
-      </div>
+      <div class="legend" id="legend"></div>
       <div class="lattice-hint">Tap the grid to pause / resume</div>
     </section>
 
@@ -151,6 +145,17 @@
       <div class="card">
         <h2>Controls</h2>
         <div class="row">
+          <label for="clockN">N</label>
+          <select id="clockN">
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6" selected>6</option>
+            <option value="7">7</option>
+          </select>
+        </div>
+        <div class="row">
           <label for="speed">Speed</label>
           <select id="speed">
             <option value="0.25">Chill</option>
@@ -167,13 +172,13 @@
         <div style="margin-top:12px;">
           <div style="font-size:.82rem;color:var(--muted);margin-bottom:8px;">Initialise spins</div>
           <div class="btns">
-            <button data-init="random" class="active">Random</button>
+            <button id="randomize" class="active">Random</button>
           </div>
         </div>
 
         <h2 style="margin-top:16px;">Observables</h2>
         <div class="obs-grid">
-          <div class="obs"><span class="k">⟨m⟩</span><span class="v" id="obsM">–</span></div>
+          <div class="obs"><span class="k">|m|</span><span class="v" id="obsM">–</span></div>
           <div class="obs"><span class="k">e / site</span><span class="v" id="obsE">–</span></div>
         </div>
         <div class="status" id="status">—</div>
@@ -185,34 +190,99 @@
 "use strict";
 
 /* ============================================================
-   Blume–Capel model
-   H = -J Σ_{<ij>} S_i S_j + D Σ_i S_i² - h Σ_i S_i
-   J = 1, spins S ∈ {-1, 0, +1}, k_B = 1, 2D square lattice (PBC)
+   Blume–Capel × Clock model
+   Each site takes one of N+1 states: 0 (vacancy) or k = 1..N.
+     z_0 = 0,   z_k = exp(2πi k / N)   (k > 0)
+   H = -(1/2) Σ_<ij> (z_i z̄_j + z_j z̄_i) + D Σ_i |z_i|²
+   Bond: 0 if either site is state 0, else -cos(2π(k-l)/N).
+   On-site: 0 for state 0, D otherwise.
+   k_B = 1, 2D square lattice (PBC).  N = 2 reproduces Blume–Capel.
    ============================================================ */
+
+// ---- model tables (rebuilt whenever N changes) ------------------------
+let clockN = 6;              // number of clock states (total states = clockN + 1)
+let COST = null;             // COST[a][b] = Re(z_a z̄_b); bond energy = -COST[a][b]
+let ZRE = null, ZIM = null;  // Re/Im parts of z_k (length clockN+1)
+let PALETTE = null;          // RGB bytes, length (clockN+1)*3
 
 // ---- simulation state -------------------------------------------------
 const sim = {
-  L: 512,           // fixed lattice linear size
-  N: 512*512,
-  spins: null,      // Int8Array of spins
-  nb: null,         // Int32Array, 4 neighbors per site (periodic)
-  order: null,      // Uint32Array, shuffled site-visit order
-  J: 1,
-  D: 0.5,
-  T: 1.2,
-  h: 0,
-  bondE: 0,         // Σ_bonds -J S_i S_j
-  sumS: 0,          // Σ S_i
-  sumS2: 0,         // Σ S_i²
+  L: 512,            // fixed lattice linear size
+  N: 512*512,        // number of sites
+  spins: null,       // Int8Array of state indices 0..clockN
+  nb: null,          // Int32Array, 4 neighbors per site (periodic)
+  order: null,       // Uint32Array, shuffled site-visit order
+  D: -0.5,
+  T: 0.8,
+  bondE: 0,          // Σ_bonds -COST[state_i][state_j]
+  nNonzero: 0,       // number of sites not in state 0
+  reSum: 0, imSum: 0,// Σ z_i (complex)
   running: true,
   sweepsPerFrame: 0.5,
   samples: 0,
-  avgM: 0, avgE: 0,
+  avgM: 0, avgE: 0,  // avgM is the rolling ⟨|m|⟩
 };
 
-// ---- canonical axis ranges (J = 1) ------------------------------------
+// ---- canonical axis ranges --------------------------------------------
 const TMIN = 0, TMAX = 3;
 const DMIN = -2, DMAX = 3;
+
+// ---- colors ------------------------------------------------------------
+// HSL (h in degrees, s,l in [0,1]) -> [r,g,b] 0..255
+function hslToRgb(h, s, l){
+  h = ((h % 360) + 360) % 360;
+  const c = (1 - Math.abs(2*l - 1)) * s;
+  const hp = h / 60;
+  const x = c * (1 - Math.abs(hp % 2 - 1));
+  let r = 0, g = 0, b = 0;
+  if (hp < 1){ r = c; g = x; }
+  else if (hp < 2){ r = x; g = c; }
+  else if (hp < 3){ g = c; b = x; }
+  else if (hp < 4){ g = x; b = c; }
+  else if (hp < 5){ r = x; b = c; }
+  else { r = c; b = x; }
+  const m = l - c/2;
+  return [Math.round((r+m)*255), Math.round((g+m)*255), Math.round((b+m)*255)];
+}
+
+function buildModel(){
+  const n = clockN;
+  // complex spins z_k
+  ZRE = new Float64Array(n+1);
+  ZIM = new Float64Array(n+1);
+  for (let k=1; k<=n; k++){
+    const ang = 2*Math.PI*k/n;
+    ZRE[k] = Math.cos(ang);
+    ZIM[k] = Math.sin(ang);
+  }
+  // bond cost table: Re(z_a z̄_b) = cos(2π(a-b)/N) when both non-zero, else 0
+  COST = [];
+  for (let a=0; a<=n; a++){
+    const row = new Float64Array(n+1);
+    for (let b=0; b<=n; b++){
+      row[b] = (a === 0 || b === 0) ? 0 : Math.cos(2*Math.PI*(a-b)/n);
+    }
+    COST.push(row);
+  }
+  // palette: state 0 = black, states 1..N evenly spaced around the hue wheel
+  PALETTE = new Uint8Array((n+1)*3);   // index 0 stays (0,0,0) = black
+  for (let k=1; k<=n; k++){
+    const rgb = hslToRgb((k-1)/n*360, 0.72, 0.5);
+    const p = k*3;
+    PALETTE[p] = rgb[0]; PALETTE[p+1] = rgb[1]; PALETTE[p+2] = rgb[2];
+  }
+}
+
+function buildLegend(){
+  const el = document.getElementById('legend');
+  let html = '';
+  for (let k=0; k<=clockN; k++){
+    const p = k*3;
+    const css = `rgb(${PALETTE[p]},${PALETTE[p+1]},${PALETTE[p+2]})`;
+    html += `<span><span class="swatch" style="background:${css}"></span>${k}</span>`;
+  }
+  el.innerHTML = html;
+}
 
 // ---- canvas helpers ----------------------------------------------------
 function fitCanvas(canvas){
@@ -250,26 +320,19 @@ function allocLattice(){
   for (let i=0; i<sim.N; i++) sim.order[i] = i;
 }
 
-function initSpins(mode){
+function initSpins(){
   const { spins, N } = sim;
-  for (let i=0; i<N; i++){
-    if (mode === 'random') spins[i] = Math.floor(Math.random()*3) - 1; // -1,0,1
-    else if (mode === '+1') spins[i] = 1;
-    else if (mode === '0')  spins[i] = 0;
-    else if (mode === '-1') spins[i] = -1;
-  }
+  for (let i=0; i<N; i++) spins[i] = (Math.random()*(clockN+1))|0;  // 0..N
   recomputeEnergy();
   resetAverages();
 }
 
 function recomputeEnergy(){
-  const { L, spins, nb, J } = sim;
-  const N = sim.N;
-  let bond = 0, sS = 0, sS2 = 0;
-  for (let i=0; i<N; i++){
-    const s = spins[i];
-    sS += s;
-    sS2 += s*s;
+  const { L, spins } = sim;
+  let bond = 0, re = 0, im = 0, nz = 0;
+  for (let i=0; i<sim.N; i++){
+    const a = spins[i];
+    if (a !== 0){ re += ZRE[a]; im += ZIM[a]; nz++; }
   }
   // count each bond once: right neighbor and down neighbor
   for (let y=0; y<L; y++){
@@ -277,20 +340,21 @@ function recomputeEnergy(){
       const i = y*L + x;
       const right = y*L + ((x+1)%L);
       const down  = ((y+1)%L)*L + x;
-      bond += -J * spins[i] * spins[right];
-      bond += -J * spins[i] * spins[down];
+      bond += -COST[spins[i]][spins[right]];
+      bond += -COST[spins[i]][spins[down]];
     }
   }
-  sim.bondE = bond; sim.sumS = sS; sim.sumS2 = sS2;
+  sim.bondE = bond; sim.reSum = re; sim.imSum = im; sim.nNonzero = nz;
 }
 
 function currentEnergy(){
-  return sim.bondE + sim.D * sim.sumS2 - sim.h * sim.sumS;
+  return sim.bondE + sim.D * sim.nNonzero;
 }
 
 // ---- Metropolis sweep ---------------------------------------------------
 function mcSweep(){
-  const { N, spins, nb, order, J, D, T, h } = sim;
+  const { N, spins, nb, order, D, T } = sim;
+  const n = clockN;
   const invT = 1 / T;
   // Fisher–Yates shuffle of the visit order, once per sweep
   for (let i = N-1; i > 0; i--){
@@ -301,19 +365,19 @@ function mcSweep(){
     const i = order[k];
     const base = i*4;
     const s = spins[i];
-    const nnSum = spins[nb[base]] + spins[nb[base+1]] + spins[nb[base+2]] + spins[nb[base+3]];
-    let newS;
-    if (s === 0)      newS = Math.random() < 0.5 ? -1 : 1;
-    else if (s === 1) newS = Math.random() < 0.5 ? -1 : 0;
-    else              newS = Math.random() < 0.5 ? 0  : 1;
-    if (newS === s) continue;
-    const ds = newS - s;
-    const dE = -J * ds * nnSum + D * (newS*newS - s*s) - h * ds;
-    if (dE <= 0 || Math.random() < Math.exp(-invT * dE)){
-      spins[i] = newS;
-      sim.bondE += -J * ds * nnSum;
-      sim.sumS  += ds;
-      sim.sumS2 += (newS*newS - s*s);
+    const s0 = spins[nb[base]], s1 = spins[nb[base+1]], s2 = spins[nb[base+2]], s3 = spins[nb[base+3]];
+    // propose uniformly among the N states other than s (symmetric proposal)
+    let newK = (Math.random()*n) | 0;   // 0..n-1
+    if (newK >= s) newK++;              // 0..n, never equal to s
+    const rowOld = COST[s], rowNew = COST[newK];
+    const dEbond = -( (rowNew[s0]+rowNew[s1]+rowNew[s2]+rowNew[s3])
+                    - (rowOld[s0]+rowOld[s1]+rowOld[s2]+rowOld[s3]) );
+    const dE = dEbond + D*((newK === 0 ? 0 : 1) - (s === 0 ? 0 : 1));
+    if (dE <= 0 || Math.random() < Math.exp(-invT*dE)){
+      spins[i] = newK;
+      sim.bondE += dEbond;
+      if (newK !== 0){ sim.reSum += ZRE[newK]; sim.imSum += ZIM[newK]; sim.nNonzero++; }
+      if (s    !== 0){ sim.reSum -= ZRE[s];    sim.imSum -= ZIM[s];    sim.nNonzero--; }
     }
   }
 }
@@ -340,26 +404,6 @@ function resetAverages(){
 }
 
 // ---- lattice rendering --------------------------------------------------
-// Spin colors: single source of truth. Edit these three hex values to restyle
-// both the lattice (via colorBySpin/spinRGB) and the legend swatches (via --up/--zero/--down).
-const SPIN_COLORS = {
-  up:   '#0095b3',   // S = +1
-  zero: '#756f3a',   // S = 0
-  down: '#316930',   // S = -1
-};
-const colorBySpin = [SPIN_COLORS.down, SPIN_COLORS.zero, SPIN_COLORS.up]; // index = s + 1  (-1, 0, +1)
-// parse hex colors once into [r,g,b] for the fast pixel buffer
-const spinRGB = colorBySpin.map(c => [parseInt(c.slice(1,3),16),
-                                      parseInt(c.slice(3,5),16),
-                                      parseInt(c.slice(5,7),16)]);
-// push the palette to the CSS custom properties used by the legend swatches
-function applySpinColors(){
-  const root = document.documentElement;
-  root.style.setProperty('--up', SPIN_COLORS.up);
-  root.style.setProperty('--zero', SPIN_COLORS.zero);
-  root.style.setProperty('--down', SPIN_COLORS.down);
-}
-
 // offscreen L×L buffer rendered via ImageData (fast for 512×512), then scaled to fit
 let offCanvas = null, offCtx = null, offImg = null;
 function ensureRenderBuffer(){
@@ -375,11 +419,11 @@ function drawLattice(){
   const { L, spins } = sim;
   const data = offImg.data;
   for (let i=0; i<L*L; i++){
-    const c = spinRGB[spins[i] + 1];
+    const p = spins[i]*3;
     const o = i*4;
-    data[o]   = c[0];
-    data[o+1] = c[1];
-    data[o+2] = c[2];
+    data[o]   = PALETTE[p];
+    data[o+1] = PALETTE[p+1];
+    data[o+2] = PALETTE[p+2];
     data[o+3] = 255;
   }
   offCtx.putImageData(offImg, 0, 0);
@@ -562,7 +606,7 @@ function updateReadout(){
   document.getElementById('obsM').textContent    = fmt(sim.avgM);
   document.getElementById('obsE').textContent    = fmt(currentEnergy() / sim.N);
   document.getElementById('status').textContent =
-    `${sim.L}×${sim.L} · J=${sim.J.toFixed(1)} · ${sim.running ? 'running' : 'paused'}`;
+    `${sim.L}×${sim.L} · N=${clockN} · ${sim.running ? 'running' : 'paused'}`;
 }
 
 function wireControls(){
@@ -584,12 +628,17 @@ function wireControls(){
     sim.sweepsPerFrame = parseFloat(e.target.value);
   });
 
-  document.querySelectorAll('[data-init]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      initSpins(btn.dataset.init);
-      document.querySelectorAll('[data-init]').forEach(b=>b.classList.remove('active'));
-      btn.classList.add('active');
-    });
+  document.getElementById('clockN').addEventListener('change', (e)=>{
+    clockN = parseInt(e.target.value, 10);
+    buildModel();
+    buildLegend();
+    initSpins();
+    phaseDirty = true;
+  });
+
+  document.getElementById('randomize').addEventListener('click', ()=>{
+    initSpins();
+    phaseDirty = true;
   });
 }
 
@@ -613,10 +662,10 @@ function frame(){
     runSweepsForFrame(sim.sweepsPerFrame);
   }
   // rolling averages of observables
-  const m = sim.sumS / sim.N;
+  const mag = Math.hypot(sim.reSum, sim.imSum) / sim.N;   // |m|
   const e = currentEnergy() / sim.N;
   const a = 0.04;
-  sim.avgM    = sim.avgM    + a*(m - sim.avgM);
+  sim.avgM    = sim.avgM    + a*(mag - sim.avgM);
   sim.avgE    = sim.avgE    + a*(e - sim.avgE);
   sim.samples++;
 
@@ -629,10 +678,11 @@ function frame(){
 
 // ---- boot -----------------------------------------------------------------
 function boot(){
-  applySpinColors();
+  buildModel();
+  buildLegend();
   allocLattice();
-  initSpins('random');
-  setParams(1.2, 0.5);
+  initSpins();
+  setParams(sim.T, sim.D);
 
   wireControls();
   attachPhasePointer();
