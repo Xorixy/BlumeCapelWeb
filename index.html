@@ -147,11 +147,11 @@
         <div class="row">
           <label for="clockN">N</label>
           <select id="clockN">
-            <option value="2">2</option>
+            <option value="2" selected>2</option>
             <option value="3">3</option>
             <option value="4">4</option>
             <option value="6">6</option>
-            <option value="12" selected>12</option>
+            <option value="12">12</option>
           </select>
         </div>
         <div class="row">
@@ -199,7 +199,7 @@
    ============================================================ */
 
 // ---- model tables (rebuilt whenever N changes) ------------------------
-let clockN = 12;              // number of clock states (total states = clockN + 1)
+let clockN = 2;              // number of clock states (total states = clockN + 1)
 let COST = null;             // COST[a][b] = Re(z_a z̄_b); bond energy = -COST[a][b]
 let ZRE = null, ZIM = null;  // Re/Im parts of z_k (length clockN+1)
 let PALETTE = null;          // RGB bytes, length (clockN+1)*3
